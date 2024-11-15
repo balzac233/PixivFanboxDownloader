@@ -9,6 +9,44 @@ import { Config } from './Config'
 
 class FileName {
 
+  static customBitSet: number[] = new Array(4).fill(0);
+
+  static {
+    FileName.add2CustomBitSet('\\');
+    FileName.add2CustomBitSet('/');
+    FileName.add2CustomBitSet(':');
+    FileName.add2CustomBitSet('?');
+    FileName.add2CustomBitSet('"');
+    FileName.add2CustomBitSet('<');
+    FileName.add2CustomBitSet('>');
+    FileName.add2CustomBitSet('*');
+    FileName.add2CustomBitSet('|');
+    FileName.add2CustomBitSet('~');
+  }
+
+  private static add2CustomBitSet(c: string): void {
+    const charCode = c.charCodeAt(0);
+    FileName.customBitSet[charCode >> 5] |= 1 << (charCode & 31);
+  }
+
+  public static containCustomBitSet(c: string): boolean {
+    const charCode = c.charCodeAt(0);
+    return (FileName.customBitSet[charCode >> 5] & (1 << (charCode & 31))) !== 0;
+  }
+
+  public static turnToSafeWindowsStr(s: string): string {
+    const charArray = Array.from(s);
+    let hasChange = false;
+    for (let i = 0; i < charArray.length; i++) {
+      const c = charArray[i];
+      if (c.charCodeAt(0) < 128 && FileName.containCustomBitSet(c)) {
+        charArray[i] = String.fromCharCode(c.charCodeAt(0) + 0xfee0);
+        hasChange = true;
+      }
+    }
+    return hasChange ? charArray.join('') : s;
+  }
+
   static notEn: RegExp = /[^a-zA-Z]/
   static charAppear: RegExp = /^[a-zA-Zー・_：\(-\) ／]+$/
   static bookmarkSet: RegExp = /(us|收藏|\+ |\+收)/
@@ -161,6 +199,103 @@ class FileName {
     return result
   }
 
+  static dealWithTagList(split: string[], sep: string, set: Set<string>) {
+
+    console.log(' ============================================================================================== ')
+    console.log(' set已有的内容 : ')
+    console.log(set)
+
+    var sj: string[] = []
+    if (split == null || split.length <= 0) {
+      return sj
+    }
+    var originStr = split.join(sep)
+    // let originLength = result.length;
+    console.log(' 开始构建建议的重命名 , 原tag串 : ')
+    console.log(originStr)
+    // printPerLine(result, 100);
+    console.log(' 原tag串的长度 : ' + originStr.length)
+    var removed = []
+    // const set = new Set();
+    for (let i = 0; i < split.length; i++) {
+      let ss: string = split[i]
+      // 代码结构暂时不整理了 末尾肯定要加tail , 然后 , 因为剪切和跳过的地方就两个 , 这两个地方记得补一下_width串就好了 ,
+      // 然后把他 _width前面加上 , (也就是StringJoiner干的)
+      // 1 - 检测 _width[ 标记 , 因为这个不是逗号隔开的,拿出来再放进StringJoiner
+      let tail = null
+      // 这里_width[放在逗号截取之后的子串内部查询是更好的 , 这样还能少计算一些情况
+      // 如果遇到_width[ 和 _压缩率[ 没有粘在一起的情况 , 那么就有点难受了
+      if (ss.includes('_width[')) {
+        let indexOf_width = ss.indexOf('_width[')
+        tail = ss.substring(indexOf_width)
+        ss = ss.substring(0, indexOf_width)
+      } else if (ss.includes('_压缩率[')) {
+        let indexOf_width = ss.indexOf('_压缩率[')
+        tail = ss.substring(indexOf_width)
+        ss = ss.substring(0, indexOf_width)
+      }
+      // 这里是为了去掉一些英文tag , 不过只去掉那种好几个英文单词的短语 , 欧美画师加tag喜欢多个单词然后空格隔开 ,
+      // 单个英文单词一般都是游戏名或者动漫名 , fgo,nikke,blueArchive 啥的
+      if (FileName.notEn.test(ss) && ss.match(FileName.charAppear)) {
+        console.log(' 检测到非纯英文单词 且 没有日文的词组或短语(一般是英文短语) , 去掉 : ' + ss)
+        removed.push(ss)
+        ss = ''
+      }
+
+      if (!FileName.StringUtilsisBlank(ss)) {
+        // \d{3,}(users入り|收藏|users加入书籤|\+ bookmarks)
+        for (let i = 0; i < ss.length; i++) {
+          // 这个是检测是不是有收藏信息
+          if (ss.charAt(i) >= '0' && ss.charAt(i) <= '9') {
+            // console.log(ss.charAt(i) + " 符合 ss.charAt(i) >= '0' && ss.charAt(i) <= '9' ")
+            let numStart = i
+            while (++i < ss.length && ss.charAt(i) >= '0' && ss.charAt(i) <= '9')
+              // 需要有 2个以上的数字 ,然后后面至少得有两个字符 ,
+              if (i - numStart > 2 && i < ss.length - 1) {
+                var sAfterNum = ss.substring(i, i + 2)
+                if (FileName.bookmarkSet.test(sAfterNum)) {
+                  var removedTag = ss.substring(numStart, ss.length)
+                  console.log(' 去除了收藏数字相关的尾缀 : ' + ss.substring(numStart, ss.length) + ' , 剩下的tag内容 : ' + ss.substring(0, numStart))
+                  removed.push(ss.substring(numStart, ss.length))
+                  // removed.push("后缀:" + ss.substring(numStart));
+                  ss = ss.substring(0, numStart)
+                  break
+                }
+              }
+          } else {
+            // console.log(ss.charAt(i) + " 不符合 ss.charAt(i) >= '0' && ss.charAt(i) <= '9' ")
+          }
+        }
+        // 有时候有空格 , 去掉
+        ss = ss.trim()
+        if (!set.has(ss)) {
+          // console.log(' 暂未出现的tag : ' + ss);
+          set.add(ss)
+          sj.push(ss)
+        } else {
+          // console.log(' 已经出现的tag : ' + ss);
+          removed.push(ss)
+        }
+      } else {
+        // console.log(" 空的 , 不要 : " + ss)
+      }
+      if (null != tail) {
+        sj.push(tail)
+      }
+    }
+
+    var afterStr = sj.join(sep)
+
+    console.log(' 构建建议的tag完毕 , 现tag串 : ')
+    console.log(afterStr)
+    console.log(' 构建后tag串长度 : ' + afterStr.length)
+    let diff = FileName.findDeleteStrList(afterStr, originStr)
+    console.log(' [不完全准确,仅供参考]去掉的部分[字符串对比得出] ' + diff.join(' === '))
+    if (removed != null && removed.length > 0) {
+      console.log(' [不完全准确,仅供参考]去掉的部分[实际的某个tag] : ' + removed.join(' --- '))
+    }
+    return sj.join(sep)
+  }
 
   constructor() {
     window.addEventListener(EVT.list.previewFileName, () => {
@@ -168,7 +303,8 @@ class FileName {
     })
   }
 
-  // 用正则过滤不安全的字符，（Chrome 和 Windows 不允许做文件名的字符）
+
+// 用正则过滤不安全的字符，（Chrome 和 Windows 不允许做文件名的字符）
   // 不安全的字符，这里多数是控制字符，需要替换掉
   private unsafeStr = new RegExp(
     /[\u0001-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufdd0-\ufdef\ufeff\ufff9-\ufffb\ufffe\uffff]/g
